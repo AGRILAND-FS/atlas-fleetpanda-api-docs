@@ -1,0 +1,168 @@
+swagger: "2.0"
+info:
+  title: "API-100-Panda-IngestEvents"
+  version: "1.0.0"
+  description: "Lambda-backed FleetPanda ingestion endpoint for shift events."
+
+host: "bjnikcmsnc.execute-api.us-east-1.amazonaws.com"
+basePath: "/dev"
+schemes:
+  - https
+
+consumes:
+  - application/json
+produces:
+  - application/json
+
+paths:
+  /fleetpanda/events/{objectType}:
+    post:
+      summary: "Ingest a FleetPanda shift event"
+      description: "Accepts a shift payload and writes the raw event body to S3."
+      parameters:
+        - name: objectType
+          in: path
+          required: true
+          type: string
+          enum:
+            - shift
+          description: "Currently only 'shift' is supported by the Lambda."
+
+        - name: body
+          in: body
+          required: true
+          description: "FleetPanda shift event payload."
+          schema:
+            $ref: "#/definitions/ShiftEventRequest"
+
+      responses:
+        "202":
+          description: "Shift event accepted."
+          schema:
+            $ref: "#/definitions/AcceptedResponse"
+          examples:
+            application/json:
+              message: "Shift event accepted"
+              objectType: "shift"
+              received: true
+
+        "400":
+          description: "Invalid request."
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+          examples:
+            application/json:
+              message: "Missing canonical_payload.shift_id"
+
+      security:
+        - FleetPandaAuthorizer: []
+
+      x-amazon-apigateway-integration:
+        type: "aws_proxy"
+        uri: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:895774352078:function:LFN-109-PandaIngestShift/invocations"
+        httpMethod: "POST"
+        responses:
+          default:
+            statusCode: "200"
+        requestParameters:
+          integration.request.path.objectType: "method.request.path.objectType"
+        passthroughBehavior: "when_no_match"
+        timeoutInMillis: 29000
+        responseTransferMode: "BUFFERED"
+        contentHandling: "CONVERT_TO_TEXT"
+
+securityDefinitions:
+  FleetPandaAuthorizer:
+    type: apiKey
+    name: Authorization
+    in: header
+    x-amazon-apigateway-authtype: cognito_user_pools
+    x-amazon-apigateway-authorizer:
+      type: cognito_user_pools
+      providerARNs:
+        - "arn:aws:cognito-idp:us-east-1:895774352078:userpool/us-east-1_8i9ska4jb"
+
+definitions:
+  ShiftEventRequest:
+    type: object
+    required:
+      - canonical_payload
+    properties:
+      canonical_payload:
+        $ref: "#/definitions/CanonicalShiftPayload"
+    example:
+      canonical_payload:
+        entity_type: "shift"
+        shift_id: "shift_12345"
+        shift_summary_id: "shift_summary_12345"
+        order_groups:
+          - order_group_id: "og_001"
+            orders:
+              - order_id: "order_1001"
+              - order_id: "order_1002"
+
+  CanonicalShiftPayload:
+    type: object
+    required:
+      - entity_type
+      - shift_id
+      - shift_summary_id
+      - order_groups
+    properties:
+      entity_type:
+        type: string
+        enum:
+          - shift
+        example: "shift"
+      shift_id:
+        type: string
+        example: "shift_12345"
+      shift_summary_id:
+        type: string
+        example: "shift_summary_12345"
+      order_groups:
+        type: array
+        minItems: 1
+        items:
+          $ref: "#/definitions/OrderGroup"
+    additionalProperties: true
+
+  OrderGroup:
+    type: object
+    properties:
+      order_group_id:
+        type: string
+        example: "og_001"
+      orders:
+        type: array
+        items:
+          $ref: "#/definitions/Order"
+    additionalProperties: true
+
+  Order:
+    type: object
+    properties:
+      order_id:
+        type: string
+        example: "order_1001"
+    additionalProperties: true
+
+  AcceptedResponse:
+    type: object
+    properties:
+      message:
+        type: string
+        example: "Shift event accepted"
+      objectType:
+        type: string
+        example: "shift"
+      received:
+        type: boolean
+        example: true
+
+  ErrorResponse:
+    type: object
+    properties:
+      message:
+        type: string
+        example: "Missing canonical_payload.shift_id"
