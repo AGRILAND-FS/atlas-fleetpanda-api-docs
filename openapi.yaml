@@ -93,13 +93,13 @@ definitions:
     example:
       canonical_payload:
         entity_type: "shift"
-        shift_id: "shift_12345"
-        shift_summary_id: "shift_summary_12345"
+        shift_id: 100001
+        shift_summary_id: 100002
         order_groups:
-          - order_group_id: "og_001"
+          - order_group_id: 600001
             orders:
-              - order_id: "order_1001"
-              - order_id: "order_1002"
+              - order_id: 500001
+              - order_id: 500002
 
   CanonicalShiftPayload:
     type: object
@@ -115,11 +115,11 @@ definitions:
           - shift
         example: "shift"
       shift_id:
-        type: string
-        example: "shift_12345"
+        type: integer
+        example: 100001
       shift_summary_id:
-        type: string
-        example: "shift_summary_12345"
+        type: integer
+        example: 100002
       order_groups:
         type: array
         minItems: 1
@@ -131,8 +131,8 @@ definitions:
     type: object
     properties:
       order_group_id:
-        type: string
-        example: "og_001"
+        type: integer
+        example: 600001
       orders:
         type: array
         items:
@@ -143,8 +143,8 @@ definitions:
     type: object
     properties:
       order_id:
-        type: string
-        example: "order_1001"
+        type: integer
+        example: 500001
     additionalProperties: true
 
   AcceptedResponse:
