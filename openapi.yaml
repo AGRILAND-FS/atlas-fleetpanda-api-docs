@@ -18,88 +18,67 @@ paths:
   /fleetpanda/events/{objectType}:
     post:
       summary: "Ingest a FleetPanda shift event"
-      description: "Accepts a shift payload and writes the raw event body to S3."
       parameters:
         - name: objectType
           in: path
           required: true
           type: string
-          enum:
-            - shift
-          description: "Currently only 'shift' is supported by the Lambda."
+          enum: [shift]
 
         - name: body
           in: body
           required: true
-          description: "FleetPanda shift event payload."
           schema:
             $ref: "#/definitions/ShiftEventRequest"
 
       responses:
         "202":
-          description: "Shift event accepted."
-          schema:
-            $ref: "#/definitions/AcceptedResponse"
-          examples:
-            application/json:
-              message: "Shift event accepted"
-              objectType: "shift"
-              received: true
-
+          description: Accepted
         "400":
-          description: "Invalid request."
-          schema:
-            $ref: "#/definitions/ErrorResponse"
-          examples:
-            application/json:
-              message: "Missing canonical_payload.shift_id"
-
-      security:
-        - FleetPandaAuthorizer: []
-
-      x-amazon-apigateway-integration:
-        type: "aws_proxy"
-        uri: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:895774352078:function:LFN-109-PandaIngestShift/invocations"
-        httpMethod: "POST"
-        responses:
-          default:
-            statusCode: "200"
-        requestParameters:
-          integration.request.path.objectType: "method.request.path.objectType"
-        passthroughBehavior: "when_no_match"
-        timeoutInMillis: 29000
-        responseTransferMode: "BUFFERED"
-        contentHandling: "CONVERT_TO_TEXT"
+          description: Validation error
 
 securityDefinitions:
   FleetPandaAuthorizer:
     type: apiKey
     name: Authorization
     in: header
-    x-amazon-apigateway-authtype: cognito_user_pools
-    x-amazon-apigateway-authorizer:
-      type: cognito_user_pools
-      providerARNs:
-        - "arn:aws:cognito-idp:us-east-1:895774352078:userpool/us-east-1_8i9ska4jb"
 
 definitions:
+
   ShiftEventRequest:
     type: object
     required:
       - canonical_payload
     properties:
+      tenant_id:
+        type: integer
       canonical_payload:
         $ref: "#/definitions/CanonicalShiftPayload"
+
     example:
+      tenant_id: 100
       canonical_payload:
         entity_type: "shift"
         shift_id: 100001
         shift_summary_id: 100002
+        tenant_id: 100
+
+        worker:
+          worker_id: 1001
+          name: "John Smith"
+          erp_id: "ERP-DRV-001"
+
+        delivery_truck:
+          truck_id: 200001
+          erp_id: "TRK-001"
+          license_plate: "TRK-001"
+
         order_groups:
           - entity_type: "order_group"
             order_group_id: 600001
             tenant_id: 100
             order_type: "DeliveryOrder"
+
             order:
               order_type: "delivery_order"
               order_id: 500001
@@ -107,50 +86,63 @@ definitions:
               order_number: "600001"
               po_number: "N/A"
               bol_number: "N/A"
+              planned_date: "2026-02-26 08:46:52 -0800"
+              planned_time: "08:46"
+              completed_date: "2026-02-26 12:24:09 -0800"
+              completed_time: "12:24"
+              external_bo_id: "EXT-BO-001"
+
               driver:
                 id: 1001
                 erp_id: "ERP-DRV-001"
                 name: "John Smith"
+
               truck:
                 id: 200001
                 erp_id: "TRK-001"
                 license_plate_number: "TRK-001"
+
               customer:
                 id: 300001
                 erp_id: "CUST-001"
                 name: "Acme Industries"
+
               customer_branch:
                 id: 400001
                 erp_id: "CUST-001-001"
                 name: "Acme Industries - Main St Springfield IL"
+
               shipping_address:
                 street_1: "123 Main St"
                 city: "Springfield"
                 postal_code: "62701"
                 state: "Illinois"
                 state_code: "IL"
+
               line_items:
                 - line_item_id: 700001
                   product_id: 40873
                   product_erp_id: "69306"
-                  product_name: "BT RESIDENTIAL - LIQUIFIED PETROLEUM GAS/GALLON"
-                  product_description: "69306,LIQUIFIED PETROLEUM GAS/GALLON"
+                  product_name: "Gas"
+                  product_description: "Gas"
                   unit_of_measure: "gallon"
                   quantity: 450.3
-                  requested_quantity: 1.0
+                  requested_quantity: 1
+
               fees:
                 - name: "LP Reg Comp"
                   erp_id: "72809"
                   rate: 9.5
-                  quantity: 1.0
+                  quantity: 1
                   total: 9.5
+
               pricings:
                 - product_erp_id: "69306"
                   quantity: 450.3
-                  rate: 0.0
-                  total: 0.0
-                  discount: 0.0
-                  sum_total: 0.0
+                  rate: 0
+                  total: 0
+                  discount: 0
+                  sum_total: 0
 
   CanonicalShiftPayload:
     type: object
@@ -158,117 +150,104 @@ definitions:
       - entity_type
       - shift_id
       - shift_summary_id
+      - worker
+      - delivery_truck
       - order_groups
     properties:
       entity_type:
         type: string
-        enum:
-          - shift
-        example: "shift"
       shift_id:
         type: integer
-        example: 100001
       shift_summary_id:
         type: integer
-        example: 100002
       tenant_id:
         type: integer
-        example: 100
+      worker:
+        type: object
+      delivery_truck:
+        type: object
       order_groups:
         type: array
-        minItems: 1
         items:
           $ref: "#/definitions/OrderGroup"
-    additionalProperties: true
 
   OrderGroup:
     type: object
+    required:
+      - order_group_id
+      - order_type
+      - order
     properties:
-      entity_type:
-        type: string
-        example: "order_group"
       order_group_id:
         type: integer
-        example: 600001
       tenant_id:
         type: integer
-        example: 100
       order_type:
         type: string
-        example: "DeliveryOrder"
       order:
         $ref: "#/definitions/Order"
-    additionalProperties: true
 
   Order:
     type: object
+    required:
+      - order_id
+      - order_type
+      - order_number
+      - po_number
+      - bol_number
+      - planned_date
+      - planned_time
+      - completed_date
+      - completed_time
+      - external_bo_id
+      - driver
+      - truck
+      - customer
+      - customer_branch
+      - shipping_address
+      - line_items
+      - fees
+      - pricings
     properties:
-      order_type:
-        type: string
-        example: "delivery_order"
       order_id:
         type: integer
-        example: 500001
-      tenant_id:
-        type: integer
-        example: 100
+      order_type:
+        type: string
       order_number:
         type: string
-        example: "600001"
       po_number:
         type: string
-        example: "N/A"
       bol_number:
         type: string
-        example: "N/A"
+      planned_date:
+        type: string
+      planned_time:
+        type: string
+      completed_date:
+        type: string
+      completed_time:
+        type: string
+      external_bo_id:
+        type: string
       driver:
         type: object
-        additionalProperties: true
       truck:
         type: object
-        additionalProperties: true
       customer:
         type: object
-        additionalProperties: true
       customer_branch:
         type: object
-        additionalProperties: true
       shipping_address:
         type: object
-        additionalProperties: true
       line_items:
         type: array
         items:
           type: object
-          additionalProperties: true
       fees:
         type: array
         items:
           type: object
-          additionalProperties: true
       pricings:
         type: array
         items:
           type: object
-          additionalProperties: true
-    additionalProperties: true
-
-  AcceptedResponse:
-    type: object
-    properties:
-      message:
-        type: string
-        example: "Shift event accepted"
-      objectType:
-        type: string
-        example: "shift"
-      received:
-        type: boolean
-        example: true
-
-  ErrorResponse:
-    type: object
-    properties:
-      message:
-        type: string
-        example: "Missing canonical_payload.shift_id"
