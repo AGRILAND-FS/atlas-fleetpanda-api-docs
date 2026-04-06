@@ -37,11 +37,19 @@ paths:
         "400":
           description: Validation error
 
+      security:
+        - FleetPandaAuthorizer: []
+
 securityDefinitions:
   FleetPandaAuthorizer:
     type: apiKey
     name: Authorization
     in: header
+    x-amazon-apigateway-authtype: cognito_user_pools
+    x-amazon-apigateway-authorizer:
+      type: cognito_user_pools
+      providerARNs:
+        - "arn:aws:cognito-idp:us-east-1:895774352078:userpool/us-east-1_8i9ska4jb"
 
 definitions:
 
