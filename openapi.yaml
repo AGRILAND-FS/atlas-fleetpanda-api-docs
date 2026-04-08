@@ -16,14 +16,24 @@ info:
 
     Send a `POST` to the Cognito OAuth2 token endpoint using the client credentials flow.
 
-    **Postman:**
-    - Method: `POST`
-    - URL: `https://us-east-18i9ska4jb.auth.us-east-1.amazoncognito.com/oauth2/token`
-    - Authorization tab: `Basic Auth` — enter your client ID as Username and client secret as Password
-    - Headers: `Content-Type: application/x-www-form-urlencoded`
-    - Body (`x-www-form-urlencoded`):
-      - `grant_type` = `client_credentials`
-      - `scope` = `default-m2m-resource-server-i2giob/write`
+    **Postman setup:**
+
+    ```
+    Method:   POST
+    URL:      https://us-east-18i9ska4jb.auth.us-east-1.amazoncognito.com/oauth2/token
+
+    Authorization tab:
+      Type:     Basic Auth
+      Username: <client_id>
+      Password: <client_secret>
+
+    Headers:
+      Content-Type: application/x-www-form-urlencoded
+
+    Body (x-www-form-urlencoded):
+      grant_type = client_credentials
+      scope      = default-m2m-resource-server-i2giob/write
+    ```
 
     **curl equivalent:**
 
