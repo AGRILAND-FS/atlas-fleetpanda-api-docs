@@ -1,8 +1,38 @@
 swagger: "2.0"
 info:
   title: "API-100-Panda-IngestEvents"
-  version: "1.0.0"
-  description: "Lambda-backed FleetPanda ingestion endpoint for shift events."
+  version: "1.1.0"
+  description: |
+    Lambda-backed FleetPanda ingestion endpoint for shift events.
+
+    ## Authentication
+
+    All requests require a Bearer token issued by the FleetPanda Cognito user pool.
+
+    **How to obtain a token:**
+
+    Use the AWS CLI or any OAuth2 client to authenticate against the Cognito user pool.
+
+    ```
+    aws cognito-idp initiate-auth \
+      --auth-flow USER_PASSWORD_AUTH \
+      --client-id <app_client_id> \
+      --auth-parameters USERNAME=<username>,PASSWORD=<password> \
+      --region us-east-1
+    ```
+
+    The response will include an `IdToken`. Pass this as the Authorization header:
+
+    ```
+    Authorization: <IdToken>
+    ```
+
+    Contact the platform team for credentials and the app client ID.
+
+    ## Response Codes
+
+    - `202 Accepted` — payload passed validation and was written to S3. Does **not** guarantee downstream Glue success.
+    - `400 Bad Request` — payload failed validation. See `message` and `missing_fields` in response body.
 
 host: "bjnikcmsnc.execute-api.us-east-1.amazonaws.com"
 basePath: "/dev"
@@ -18,12 +48,20 @@ paths:
   /fleetpanda/events/{objectType}:
     post:
       summary: "Ingest a FleetPanda shift event"
+      description: |
+        Accepts a FleetPanda shift payload, validates required fields, and writes
+        the raw payload to S3. Only `shift` is currently supported as an object type.
+
+        On success, EventBridge triggers the Glue workflow to process the raw file
+        into staged Parquet tables. The 202 response does not confirm downstream success —
+        check CloudWatch and the staged S3 paths separately.
       parameters:
         - name: objectType
           in: path
           required: true
           type: string
           enum: [shift]
+          description: "Only 'shift' is supported."
 
         - name: body
           in: body
@@ -33,9 +71,13 @@ paths:
 
       responses:
         "202":
-          description: Accepted
+          description: "Accepted — payload validated and written to S3."
+          schema:
+            $ref: "#/definitions/AcceptedResponse"
         "400":
-          description: Validation error
+          description: "Validation error — payload failed one or more checks."
+          schema:
+            $ref: "#/definitions/ErrorResponse"
 
       security:
         - FleetPandaAuthorizer: []
@@ -53,13 +95,19 @@ securityDefinitions:
 
 definitions:
 
+  # -------------------------------------------------------
+  # TOP-LEVEL REQUEST
+  # -------------------------------------------------------
+
   ShiftEventRequest:
     type: object
     required:
+      - tenant_id
       - canonical_payload
     properties:
       tenant_id:
         type: integer
+        description: "Top-level tenant identifier. Required and must be an integer."
       canonical_payload:
         $ref: "#/definitions/CanonicalShiftPayload"
 
@@ -69,64 +117,50 @@ definitions:
         entity_type: "shift"
         shift_id: 100001
         shift_summary_id: 100002
-        tenant_id: 100
-
         worker:
           worker_id: 1001
           name: "John Smith"
           erp_id: "ERP-DRV-001"
-
         delivery_truck:
           truck_id: 200001
           erp_id: "TRK-001"
           license_plate: "TRK-001"
-
         order_groups:
           - entity_type: "order_group"
             order_group_id: 600001
             tenant_id: 100
             order_type: "DeliveryOrder"
-
             order:
               order_type: "delivery_order"
               order_id: 500001
               tenant_id: 100
               order_number: "600001"
-              po_number: "N/A"
-              bol_number: "N/A"
               planned_date: "2026-02-26 08:46:52 -0800"
               planned_time: "08:46"
               completed_date: "2026-02-26 12:24:09 -0800"
               completed_time: "12:24"
-              external_bo_id: "EXT-BO-001"
-
               driver:
                 id: 1001
                 erp_id: "ERP-DRV-001"
                 name: "John Smith"
-
               truck:
                 id: 200001
                 erp_id: "TRK-001"
                 license_plate_number: "TRK-001"
-
               customer:
                 id: 300001
                 erp_id: "CUST-001"
                 name: "Acme Industries"
-
               customer_branch:
                 id: 400001
                 erp_id: "CUST-001-001"
                 name: "Acme Industries - Main St Springfield IL"
-
               shipping_address:
                 street_1: "123 Main St"
                 city: "Springfield"
                 postal_code: "62701"
                 state: "Illinois"
                 state_code: "IL"
-
               line_items:
                 - line_item_id: 700001
                   product_id: 40873
@@ -136,21 +170,22 @@ definitions:
                   unit_of_measure: "gallon"
                   quantity: 450.3
                   requested_quantity: 1
-
               fees:
                 - name: "LP Reg Comp"
                   erp_id: "72809"
                   rate: 9.5
                   quantity: 1
                   total: 9.5
-
               pricings:
                 - product_erp_id: "69306"
                   quantity: 450.3
                   rate: 0
                   total: 0
-                  discount: 0
                   sum_total: 0
+
+  # -------------------------------------------------------
+  # CANONICAL PAYLOAD
+  # -------------------------------------------------------
 
   CanonicalShiftPayload:
     type: object
@@ -164,58 +199,114 @@ definitions:
     properties:
       entity_type:
         type: string
+        enum: ["shift"]
+        description: "Must be 'shift'."
       shift_id:
         type: integer
+        description: "Required. Must be an integer."
       shift_summary_id:
         type: integer
+        description: "Required. Must be an integer."
       tenant_id:
         type: integer
+        description: "Optional at this level — top-level tenant_id on the request body is what is validated."
       worker:
-        type: object
+        $ref: "#/definitions/Worker"
       delivery_truck:
-        type: object
+        $ref: "#/definitions/DeliveryTruck"
       order_groups:
         type: array
+        minItems: 1
+        description: "Required. Must be a non-empty array of order group objects."
         items:
           $ref: "#/definitions/OrderGroup"
+
+  # -------------------------------------------------------
+  # WORKER / TRUCK (shift-level)
+  # -------------------------------------------------------
+
+  Worker:
+    type: object
+    required:
+      - worker_id
+      - erp_id
+      - name
+    properties:
+      worker_id:
+        type: integer
+      erp_id:
+        type: string
+      name:
+        type: string
+
+  DeliveryTruck:
+    type: object
+    required:
+      - truck_id
+      - erp_id
+      - license_plate
+    properties:
+      truck_id:
+        type: integer
+      erp_id:
+        type: string
+      license_plate:
+        type: string
+        description: "Note: shift-level truck uses 'license_plate'. Order-level truck uses 'license_plate_number'."
+
+  # -------------------------------------------------------
+  # ORDER GROUPS
+  # -------------------------------------------------------
 
   OrderGroup:
     type: object
     required:
       - order_group_id
       - order_type
-      - order
     properties:
       order_group_id:
         type: integer
       tenant_id:
         type: integer
+        description: "Required for DeliveryOrder groups. May alternatively be supplied on the order object."
       order_type:
         type: string
+        enum: ["DeliveryOrder", "LoadingOrder"]
+        description: |
+          Determines which validation path is applied:
+          - DeliveryOrder: requires `order` (single object) with full delivery fields.
+          - LoadingOrder: accepts either `order` (single object) or `orders` (array of objects).
+          Other order types (e.g. TransferOrder) are passed through to S3 without validation.
       order:
         $ref: "#/definitions/Order"
+        description: "Used for DeliveryOrder (required) and LoadingOrder (accepted; alternative to `orders`)."
+      orders:
+        type: array
+        description: "LoadingOrder only. Alternative to `order` when the group contains multiple loading orders."
+        items:
+          $ref: "#/definitions/LoadingOrder"
+
+  # -------------------------------------------------------
+  # DELIVERY ORDER
+  # -------------------------------------------------------
 
   Order:
     type: object
+    description: "Delivery order object. All fields listed as required are validated by Lambda."
     required:
       - order_id
       - order_type
       - order_number
-      - po_number
-      - bol_number
       - planned_date
       - planned_time
       - completed_date
       - completed_time
-      - external_bo_id
       - driver
       - truck
       - customer
       - customer_branch
       - shipping_address
       - line_items
-      - fees
-      - pricings
     properties:
       order_id:
         type: integer
@@ -225,8 +316,10 @@ definitions:
         type: string
       po_number:
         type: string
+        description: "Optional."
       bol_number:
         type: string
+        description: "Optional."
       planned_date:
         type: string
       planned_time:
@@ -237,25 +330,284 @@ definitions:
         type: string
       external_bo_id:
         type: string
+        description: "Optional."
       driver:
-        type: object
+        $ref: "#/definitions/OrderDriver"
       truck:
-        type: object
+        $ref: "#/definitions/OrderTruck"
       customer:
-        type: object
+        $ref: "#/definitions/Customer"
       customer_branch:
-        type: object
+        $ref: "#/definitions/CustomerBranch"
       shipping_address:
-        type: object
+        $ref: "#/definitions/ShippingAddress"
       line_items:
         type: array
+        description: "Required. Validated if present."
         items:
-          type: object
+          $ref: "#/definitions/LineItem"
       fees:
         type: array
+        description: "Optional. Validated if present."
         items:
-          type: object
+          $ref: "#/definitions/Fee"
       pricings:
         type: array
+        description: "Optional. Validated if present."
         items:
-          type: object
+          $ref: "#/definitions/Pricing"
+
+  # -------------------------------------------------------
+  # LOADING ORDER
+  # -------------------------------------------------------
+
+  LoadingOrder:
+    type: object
+    description: "Loading order object. Validation is minimal compared to delivery orders."
+    required:
+      - order_id
+      - order_type
+      - order_number
+      - line_items
+    properties:
+      order_id:
+        type: integer
+      order_type:
+        type: string
+      order_number:
+        type: string
+      line_items:
+        type: array
+        description: "Required. Each item must have line_item_id."
+        items:
+          $ref: "#/definitions/LoadingLineItem"
+      completed_date:
+        type: string
+        description: "Optional."
+      completed_time:
+        type: string
+        description: "Optional."
+      hub:
+        type: object
+        description: "Optional. Hub/terminal reference."
+
+  # -------------------------------------------------------
+  # DRIVER / TRUCK (order-level)
+  # -------------------------------------------------------
+
+  OrderDriver:
+    type: object
+    required:
+      - id
+      - erp_id
+      - name
+    properties:
+      id:
+        type: integer
+      erp_id:
+        type: string
+      name:
+        type: string
+
+  OrderTruck:
+    type: object
+    required:
+      - id
+      - erp_id
+      - license_plate_number
+    properties:
+      id:
+        type: integer
+      erp_id:
+        type: string
+      license_plate_number:
+        type: string
+        description: "Note: order-level truck uses 'license_plate_number'. Shift-level delivery_truck uses 'license_plate'."
+
+  # -------------------------------------------------------
+  # CUSTOMER / ADDRESS
+  # -------------------------------------------------------
+
+  Customer:
+    type: object
+    required:
+      - id
+      - erp_id
+      - name
+    properties:
+      id:
+        type: integer
+      erp_id:
+        type: string
+      name:
+        type: string
+
+  CustomerBranch:
+    type: object
+    required:
+      - id
+      - erp_id
+      - name
+    properties:
+      id:
+        type: integer
+      erp_id:
+        type: string
+      name:
+        type: string
+
+  ShippingAddress:
+    type: object
+    required:
+      - street_1
+      - city
+      - state
+      - state_code
+      - postal_code
+    properties:
+      street_1:
+        type: string
+      city:
+        type: string
+      state:
+        type: string
+      state_code:
+        type: string
+      postal_code:
+        type: string
+
+  # -------------------------------------------------------
+  # LINE ITEMS / FEES / PRICING
+  # -------------------------------------------------------
+
+  LineItem:
+    type: object
+    description: "Delivery order line item. All fields are required when the array is present."
+    required:
+      - line_item_id
+      - product_id
+      - product_erp_id
+      - product_name
+      - quantity
+      - requested_quantity
+      - unit_of_measure
+    properties:
+      line_item_id:
+        type: integer
+      product_id:
+        type: integer
+      product_erp_id:
+        type: string
+      product_name:
+        type: string
+      product_description:
+        type: string
+        description: "Optional."
+      quantity:
+        type: number
+      requested_quantity:
+        type: number
+      unit_of_measure:
+        type: string
+
+  LoadingLineItem:
+    type: object
+    description: "Loading order line item. Only line_item_id is required by Lambda validation."
+    required:
+      - line_item_id
+    properties:
+      line_item_id:
+        type: integer
+      product_id:
+        type: integer
+      product_erp_id:
+        type: string
+      product_name:
+        type: string
+      product_description:
+        type: string
+      quantity:
+        type: number
+      requested_quantity:
+        type: number
+      unit_of_measure:
+        type: string
+
+  Fee:
+    type: object
+    description: "Optional. Validated by Lambda only when the fees array is present."
+    required:
+      - name
+      - erp_id
+      - rate
+      - quantity
+      - total
+    properties:
+      name:
+        type: string
+        description: "Input field name in the payload. Staged as 'fee_name' in Athena."
+      erp_id:
+        type: string
+        description: "Input field name in the payload. Staged as 'fee_erp_id' in Athena."
+      rate:
+        type: number
+      quantity:
+        type: number
+      total:
+        type: number
+
+  Pricing:
+    type: object
+    description: "Optional. Validated by Lambda only when the pricings array is present."
+    required:
+      - product_erp_id
+      - quantity
+      - rate
+      - total
+      - sum_total
+    properties:
+      product_erp_id:
+        type: string
+      quantity:
+        type: number
+      rate:
+        type: number
+      total:
+        type: number
+      discount:
+        type: number
+        description: "Optional."
+      sum_total:
+        type: number
+
+  # -------------------------------------------------------
+  # RESPONSES
+  # -------------------------------------------------------
+
+  AcceptedResponse:
+    type: object
+    properties:
+      message:
+        type: string
+        example: "Shift event accepted"
+      objectType:
+        type: string
+        example: "shift"
+      received:
+        type: boolean
+        example: true
+
+  ErrorResponse:
+    type: object
+    properties:
+      message:
+        type: string
+        example: "Payload validation failed"
+      missing_fields:
+        type: array
+        description: "Present when multiple fields fail validation. Lists each failing field path."
+        items:
+          type: string
+        example:
+          - "canonical_payload.shift_id must be an integer"
+          - "canonical_payload.order_groups[0].order.driver.id"
