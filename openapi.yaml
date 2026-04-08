@@ -5,34 +5,55 @@ info:
   description: |
     Lambda-backed FleetPanda ingestion endpoint for shift events.
 
+    ---
+
     ## Authentication
 
-    All requests require a Bearer token issued by the FleetPanda Cognito user pool.
+    All requests require a Bearer token from the FleetPanda Cognito user pool.
+    Contact the platform team for your client ID, client secret, and scope value.
 
-    **How to obtain a token:**
+    **Step 1 — Get a token**
 
-    Use the AWS CLI or any OAuth2 client to authenticate against the Cognito user pool.
+    Send a `POST` to the Cognito OAuth2 token endpoint using the client credentials flow.
+
+    **Postman:**
+    - Method: `POST`
+    - URL: `https://us-east-18i9ska4jb.auth.us-east-1.amazoncognito.com/oauth2/token`
+    - Authorization tab: `Basic Auth` — enter your client ID as Username and client secret as Password
+    - Headers: `Content-Type: application/x-www-form-urlencoded`
+    - Body (`x-www-form-urlencoded`):
+      - `grant_type` = `client_credentials`
+      - `scope` = `default-m2m-resource-server-i2giob/write`
+
+    **curl equivalent:**
 
     ```
-    aws cognito-idp initiate-auth \
-      --auth-flow USER_PASSWORD_AUTH \
-      --client-id <app_client_id> \
-      --auth-parameters USERNAME=<username>,PASSWORD=<password> \
-      --region us-east-1
+    curl -X POST https://us-east-18i9ska4jb.auth.us-east-1.amazoncognito.com/oauth2/token \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -u "<client_id>:<client_secret>" \
+      -d "grant_type=client_credentials&scope=default-m2m-resource-server-i2giob/write"
     ```
 
-    The response will include an `IdToken`. Pass this as the Authorization header:
+    Copy the `access_token` value from the response.
+
+    **Step 2 — Authorize in Swagger UI:**
+
+    Click the **Authorize** button at the top right of this page. In the Value field, enter your token with the `Bearer` prefix:
 
     ```
-    Authorization: <IdToken>
+    Bearer <access_token>
     ```
 
-    Contact the platform team for credentials and the app client ID.
+    > The `Bearer` prefix is required. Entering the token alone will result in a 401.
+
+    ---
 
     ## Response Codes
 
-    - `202 Accepted` — payload passed validation and was written to S3. Does **not** guarantee downstream Glue success.
-    - `400 Bad Request` — payload failed validation. See `message` and `missing_fields` in response body.
+    | Code | Meaning |
+    |------|---------|
+    | `202 Accepted` | Payload validated and written to S3. Does **not** guarantee downstream Glue success. |
+    | `400 Bad Request` | Payload failed validation. See `message` and `missing_fields` in the response body. |
 
 host: "bjnikcmsnc.execute-api.us-east-1.amazonaws.com"
 basePath: "/dev"
