@@ -1,7 +1,7 @@
 swagger: "2.0"
 info:
   title: "API-100-Panda-IngestEvents"
-  version: "1.1.0"
+  version: "1.2.0"
   description: |
     Lambda-backed FleetPanda ingestion endpoint for shift events.
 
@@ -63,7 +63,31 @@ info:
     | Code | Meaning |
     |------|---------|
     | `202 Accepted` | Payload validated and written to S3. Does **not** guarantee downstream Glue success. |
-    | `400 Bad Request` | Payload failed validation. See `message` and `missing_fields` in the response body. |
+    | `400 Bad Request` | Payload failed validation. See `message`, `detail`, and `missing_fields` in the response body. |
+    | `500 Internal Error` | Storage failure on our side. Quote the `ref` value when reporting it. |
+
+    ## Reading Error Responses (v1.2.0)
+
+    Every response, success or error, includes a `request_id`. Quote it when asking us
+    about a request and we can find it in our logs immediately.
+
+    Validation does **not** stop at the first problem: the `missing_fields` array in a
+    `Payload validation failed` response lists **every** failing field with its exact path,
+    including the order group index (e.g. `canonical_payload.order_groups[2].order.driver.erp_id`).
+    Type errors state what was received, e.g. `tenant_id must be an integer, got string`.
+    Most other 400s include a `detail` field explaining what was received vs expected.
+
+    Important: post the shift payload itself. If your system fails to build a shift and
+    posts its own error object instead (`success: false` + `error`), the API returns
+    `Missing or invalid canonical_payload` with a `detail` explaining that the body was
+    an error callback. Nothing is ingested in that case.
+
+    ## Validation Rules Worth Knowing
+
+    - `tenant_id`, `shift_id`, `shift_summary_id` must be JSON integers. Strings and booleans are rejected.
+    - Every `erp_id` (worker, delivery_truck, driver, customer, customer_branch) must be present and non-empty. Test entities without ERP ids assigned will be rejected.
+    - `line_items`, `fees`, `pricings` must be JSON arrays when present. An object where an array is expected is a 400.
+    - A LoadingOrder group may use `order` (single) or `orders` (array), not both: sending a non-empty `orders` alongside `order` is rejected as ambiguous. An empty `orders` array is treated as absent.
 
 host: "bjnikcmsnc.execute-api.us-east-1.amazonaws.com"
 basePath: "/dev"
@@ -302,18 +326,21 @@ definitions:
         description: "Required for DeliveryOrder groups. May alternatively be supplied on the order object."
       order_type:
         type: string
-        enum: ["DeliveryOrder", "LoadingOrder"]
+        enum: ["DeliveryOrder", "LoadingOrder", "TransferOrder"]
         description: |
           Determines which validation path is applied:
           - DeliveryOrder: requires `order` (single object) with full delivery fields.
-          - LoadingOrder: accepts either `order` (single object) or `orders` (array of objects).
-          Other order types (e.g. TransferOrder) are passed through to S3 without validation.
+          - LoadingOrder: accepts either `order` (single object) or `orders` (array of objects),
+            but NOT both — a non-empty `orders` alongside `order` is rejected as ambiguous.
+            An empty `orders` array is treated as absent (the `order` object is used).
+          - TransferOrder: accepted with only order_group_id/order_type validated; processed
+            into transfer-order staged tables downstream.
       order:
         $ref: "#/definitions/Order"
-        description: "Used for DeliveryOrder (required) and LoadingOrder (accepted; alternative to `orders`)."
+        description: "Used for DeliveryOrder (required) and LoadingOrder (alternative to `orders`, not alongside it)."
       orders:
         type: array
-        description: "LoadingOrder only. Alternative to `order` when the group contains multiple loading orders."
+        description: "LoadingOrder only. Alternative to `order` when the group contains multiple loading orders. Do not send alongside `order`."
         items:
           $ref: "#/definitions/LoadingOrder"
 
@@ -627,6 +654,10 @@ definitions:
       received:
         type: boolean
         example: true
+      request_id:
+        type: string
+        description: "API Gateway request id. Quote it when asking about a request."
+        example: "2cc4bc81-3148-4bb7-a193-ab0d8cb408f5"
 
   ErrorResponse:
     type: object
@@ -634,11 +665,19 @@ definitions:
       message:
         type: string
         example: "Payload validation failed"
+      detail:
+        type: string
+        description: "Human-readable explanation of what was received vs expected. Present on most errors."
+        example: "2 problem(s) found; every problem is listed in missing_fields (validation does not stop at the first)"
       missing_fields:
         type: array
-        description: "Present when multiple fields fail validation. Lists each failing field path."
+        description: "Present on field-validation failures. Lists EVERY failing field path (validation does not stop at the first error). Type errors state what was received."
         items:
           type: string
         example:
-          - "canonical_payload.shift_id must be an integer"
-          - "canonical_payload.order_groups[0].order.driver.id"
+          - "canonical_payload.shift_id must be an integer, got string"
+          - "canonical_payload.order_groups[0].order.driver.erp_id"
+      request_id:
+        type: string
+        description: "API Gateway request id. Quote it when asking about a request."
+        example: "2cc4bc81-3148-4bb7-a193-ab0d8cb408f5"
