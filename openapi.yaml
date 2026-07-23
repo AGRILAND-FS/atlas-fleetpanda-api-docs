@@ -1,7 +1,7 @@
 swagger: "2.0"
 info:
   title: "API-100-Panda-IngestEvents"
-  version: "1.2.0"
+  version: "1.3.0"
   description: |
     Lambda-backed FleetPanda ingestion endpoint for shift events.
 
@@ -85,7 +85,8 @@ info:
     ## Validation Rules Worth Knowing
 
     - `tenant_id`, `shift_id`, `shift_summary_id` must be JSON integers. Strings and booleans are rejected.
-    - Every `erp_id` (worker, delivery_truck, driver, customer, customer_branch) must be present and non-empty. Test entities without ERP ids assigned will be rejected.
+    - **Optional since v1.3.0:** `worker.erp_id`, `delivery_truck.erp_id`, and order-level `driver.erp_id` may be omitted (these entities do not always carry an ERP id). `driver.id` and `driver.name` are still required on every delivery order.
+    - **Still required and non-empty:** `customer.erp_id`, `customer_branch.erp_id` (the ERP ship-to code — the only field tying a delivery to the ERP ship-to), order-level `truck.erp_id`, and `product_erp_id` on every line item. Test entities must have these populated the way production data will.
     - `line_items`, `fees`, `pricings` must be JSON arrays when present. An object where an array is expected is a 400.
     - A LoadingOrder group may use `order` (single) or `orders` (array), not both: sending a non-empty `orders` alongside `order` is rejected as ambiguous. An empty `orders` array is treated as absent.
 
@@ -284,13 +285,13 @@ definitions:
     type: object
     required:
       - worker_id
-      - erp_id
       - name
     properties:
       worker_id:
         type: integer
       erp_id:
         type: string
+        description: "Optional since v1.3.0. Include when the worker has an ERP id assigned."
       name:
         type: string
 
@@ -298,13 +299,13 @@ definitions:
     type: object
     required:
       - truck_id
-      - erp_id
       - license_plate
     properties:
       truck_id:
         type: integer
       erp_id:
         type: string
+        description: "Optional since v1.3.0. The order-level truck.erp_id remains required."
       license_plate:
         type: string
         description: "Note: shift-level truck uses 'license_plate'. Order-level truck uses 'license_plate_number'."
@@ -457,13 +458,13 @@ definitions:
     type: object
     required:
       - id
-      - erp_id
       - name
     properties:
       id:
         type: integer
       erp_id:
         type: string
+        description: "Optional since v1.3.0. May become required again in a future version once driver ERP identification is settled."
       name:
         type: string
 
