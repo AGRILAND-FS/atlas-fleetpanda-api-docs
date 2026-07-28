@@ -4,24 +4,55 @@
   <meta charset="UTF-8" />
   <title>FleetPanda API Docs</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    #api-nav {
+      display: flex; align-items: center; gap: 1rem;
+      padding: .85rem 1.5rem; background: #1b1b1b; color: #fff;
+    }
+    #api-nav strong { font-size: .95rem; font-weight: 600; }
+    #api-nav select {
+      padding: .35rem .5rem; font-size: .9rem; border-radius: 4px;
+      border: 1px solid #555; background: #fff; color: #1b1b1b;
+    }
+    #api-nav span { font-size: .8rem; opacity: .7; }
+  </style>
 </head>
 <body>
+  <!-- Explicit selector rather than Swagger UI's built-in `urls` picker: that picker is
+       part of the topbar plugin, which only ships in swagger-ui-standalone-preset.js.
+       Loading the standalone preset would also add an editable spec-URL box, which is
+       noise on a partner-facing page. This does the one thing needed. -->
+  <nav id="api-nav">
+    <strong>FleetPanda API</strong>
+    <select id="spec-select" aria-label="Choose an API">
+      <option value="./openapi.yaml">Shift Ingestion (API-100) — FleetPanda to ATLAS</option>
+      <option value="./openapi-pricing.yaml">Fuel Pricing (API-018) — ATLAS to FleetPanda</option>
+    </select>
+    <span>Two separate APIs, each with its own host and authentication.</span>
+  </nav>
+
   <div id="swagger-ui"></div>
 
   <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
   <script>
-    // Two separate APIs, not two paths on one API: different host, different base path,
-    // and different auth (Cognito bearer vs API key). Swagger 2.0 allows a single host
-    // per document, so each gets its own spec and the picker switches between them.
+    const select = document.getElementById("spec-select");
+
+    function render(url) {
+      SwaggerUIBundle({ url: url, dom_id: "#swagger-ui", docExpansion: "list" });
+      // Keep the chosen spec in the URL so a link can point straight at either one.
+      const q = new URLSearchParams(location.search);
+      q.set("spec", url === "./openapi-pricing.yaml" ? "pricing" : "shift");
+      history.replaceState(null, "", location.pathname + "?" + q.toString());
+    }
+
     window.onload = () => {
-      SwaggerUIBundle({
-        urls: [
-          { url: "./openapi.yaml",         name: "Shift Ingestion (API-100)" },
-          { url: "./openapi-pricing.yaml", name: "Fuel Pricing (API-018)" }
-        ],
-        "urls.primaryName": "Shift Ingestion (API-100)",
-        dom_id: "#swagger-ui"
-      });
+      const wanted = new URLSearchParams(location.search).get("spec") === "pricing"
+        ? "./openapi-pricing.yaml"
+        : "./openapi.yaml";
+      select.value = wanted;
+      render(wanted);
+      select.addEventListener("change", () => render(select.value));
     };
   </script>
 </body>
