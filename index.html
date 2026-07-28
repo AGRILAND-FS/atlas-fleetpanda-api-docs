@@ -10,9 +10,16 @@
 
   <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
   <script>
+    // Two separate APIs, not two paths on one API: different host, different base path,
+    // and different auth (Cognito bearer vs API key). Swagger 2.0 allows a single host
+    // per document, so each gets its own spec and the picker switches between them.
     window.onload = () => {
       SwaggerUIBundle({
-        url: "./openapi.yaml",
+        urls: [
+          { url: "./openapi.yaml",         name: "Shift Ingestion (API-100)" },
+          { url: "./openapi-pricing.yaml", name: "Fuel Pricing (API-018)" }
+        ],
+        "urls.primaryName": "Shift Ingestion (API-100)",
         dom_id: "#swagger-ui"
       });
     };

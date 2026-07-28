@@ -1,0 +1,403 @@
+swagger: "2.0"
+info:
+  title: "API-018-AxxisPricesOPIS — Fuel Pricing"
+  version: "1.0.0"
+  description: |
+    Read-only fuel pricing published by ATLAS from the Axxis feed. Two independent
+    lists, refreshed on every Axxis drop (roughly hourly through the day).
+
+    | Endpoint | What it is | Keyed by |
+    |---|---|---|
+    | `GET /v1/index` | OPIS rack benchmark prices | market |
+    | `GET /v1/supplier` | Individual supplier quotes | terminal |
+
+    These are separate lists on purpose. OPIS index rows are published for a **market**
+    (e.g. `Abilene`); supplier quotes are for a specific **terminal** (e.g. `Lemont ONK`).
+    They arrive in one upstream file but describe different things and should not be mixed.
+
+    ---
+
+    ## Authentication
+
+    Send your API key in the `x-api-key` header on every request.
+
+    ```
+    curl -H "x-api-key: <your key>" \
+      "https://xjygg1vm1c.execute-api.us-east-1.amazonaws.com/prod/v1/supplier?product=LPG"
+    ```
+
+    A missing or invalid key returns `403`. Contact the ATLAS team for a key.
+
+    **Rate limits:** 10 requests/second, burst 20, 10,000 requests/day.
+
+    ---
+
+    ## Filtering
+
+    Every filter is optional. Omit it and you get everything. Supply a comma-separated
+    list to match several values. Matching is **exact and case-sensitive** — these are
+    identifiers from the upstream feed, not free text.
+
+    ```
+    /v1/index?index=OPIS Unbranded Average,OPIS Unbranded Low&market=Abilene
+    /v1/supplier?supplier=DOOLEY&product=LPG,NO2ULS
+    ```
+
+    An unrecognised parameter returns `400` listing the valid ones, rather than being
+    silently ignored.
+
+    ---
+
+    ## Pagination
+
+    Responses are paginated. Default page size is 1000, maximum 5000.
+
+    Follow `nextOffset` until it comes back `null`:
+
+    ```
+    GET /v1/supplier?limit=1000            -> nextOffset: 1000
+    GET /v1/supplier?limit=1000&offset=1000 -> nextOffset: 2000
+    ...
+    GET /v1/supplier?limit=1000&offset=8000 -> nextOffset: null   (done)
+    ```
+
+    Do not assume a fixed total. Row counts vary substantially between drops — the
+    upstream file ranges from roughly 16,000 to 50,000+ rows depending on the day.
+
+    Results are ordered by label, then place, then product, so pages do not overlap.
+
+    ## Compression
+
+    Send `Accept-Encoding: gzip` and the response body is gzipped. On a full page this
+    is roughly a 20x reduction (183 KB to 7.6 KB) and is strongly recommended for
+    unfiltered pulls.
+
+    ---
+
+    ## What the numbers mean
+
+    **`price`** is the quoted price per gallon in USD, exactly as published upstream.
+    No markup, no adjustment, no floor applied.
+
+    **`effective_at`** is when the price became effective, in **UTC**. The upstream feed
+    quotes Eastern time; it is converted on ingest. **`ingested_at`** is when ATLAS
+    read the file, also UTC. Both are `YYYY-MM-DD HH:MM:SS.SSS`.
+
+    **One row per identifier + place + product**, always the most recent quote. A single
+    upstream drop may carry the same combination many times at different timestamps
+    through the day; only the latest survives.
+
+    ---
+
+    ## What is filtered out before you see it
+
+    Rows we consider non-quotes are removed rather than passed through:
+
+    - **Price outside $0.70–$7.00.** The upstream feed uses high values as a "no quote"
+      placeholder — a cluster at and just below `9.00` (`9.000000`, `8.9999`, `8.88`) —
+      and occasional near-zero values. LPG is the one exception, floored at `$0.01`,
+      because propane legitimately trades below $0.70.
+    - **Branded rows.** Agriland buys unbranded except where there is no alternative,
+      so branded quotes are not actionable.
+    - **High-ethanol blends** (`E-54` through `E-85`, `RE-*`, `E85FLX`). Their upstream
+      values are not outright prices — the same product spans $0.16 to $2.98 within one
+      drop, and the median falls as ethanol content rises. Excluded pending clarification
+      from Axxis. Gasoline containing 10–15% ethanol (`87E10`, `89E10`, `91E10`, `88E15`,
+      and similar) is **not** affected and is published normally.
+    - **OPIS contract benchmarks** (`CAV`/`CHI`/`CLO`) and `OP*GCAVG`, on `/v1/index`.
+      Only the rack benchmarks are published.
+
+    A series being absent from a response does not mean it does not exist — upstream
+    drops are partial, and which codes appear varies between deliveries.
+
+    ---
+
+    ## Identifiers vs labels
+
+    Each row carries both. `opis_id` / `axxis_id` is the upstream code **verbatim,
+    including internal padding** — it is the stable identity. `index` / `supplier` is
+    the display label, and is what the filter parameters match on.
+
+    ```
+    opis_id  "OP*G6HI  U"   ->  index     "OPIS Unbranded High"
+    axxis_id "MUSKET   ~"   ->  supplier  "MUSKET~"
+    ```
+
+    Supplier labels are currently derived from the code; human-readable supplier names
+    will replace them in a future version. `axxis_id` will not change.
+
+    A trailing `~` on a supplier is part of its identity, not noise. `OFFEN*PHL` and
+    `OFFEN*PHL~` are **different suppliers** carrying different products at the same
+    terminal — treat them separately.
+
+host: "xjygg1vm1c.execute-api.us-east-1.amazonaws.com"
+basePath: "/prod"
+schemes:
+  - https
+
+produces:
+  - application/json
+
+paths:
+  /v1/index:
+    get:
+      summary: "OPIS rack benchmark prices by market"
+      description: |
+        Current OPIS rack benchmark prices. One row per benchmark + market + product,
+        latest effective time.
+      parameters:
+        - name: index
+          in: query
+          required: false
+          type: string
+          description: |
+            Comma-separated benchmark labels. Omit for all. Exact, case-sensitive.
+
+            Valid values: `OPIS Average`, `OPIS High`, `OPIS Low`,
+            `OPIS Unbranded Average`, `OPIS Unbranded High`, `OPIS Unbranded Low`.
+        - name: market
+          in: query
+          required: false
+          type: string
+          description: "Comma-separated market names, e.g. `Abilene,Chicago`. Omit for all."
+        - name: product
+          in: query
+          required: false
+          type: string
+          description: "Comma-separated product codes, e.g. `87E10,NO2ULS`. Omit for all."
+        - name: limit
+          in: query
+          required: false
+          type: integer
+          default: 1000
+          maximum: 5000
+        - name: offset
+          in: query
+          required: false
+          type: integer
+          default: 0
+      responses:
+        "200":
+          description: "A page of index prices."
+          schema:
+            $ref: "#/definitions/IndexPage"
+        "400":
+          description: "Unknown parameter, or non-integer limit/offset."
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "403":
+          description: "Missing or invalid API key."
+      security:
+        - ApiKey: []
+
+  /v1/supplier:
+    get:
+      summary: "Supplier fuel quotes by terminal"
+      description: |
+        Current supplier quotes. One row per supplier + terminal + product, latest
+        effective time.
+      parameters:
+        - name: supplier
+          in: query
+          required: false
+          type: string
+          description: |
+            Comma-separated supplier labels, e.g. `DOOLEY,MUSKET~`. Omit for all.
+            Exact and case-sensitive. Note that a trailing `~` is significant.
+        - name: terminal
+          in: query
+          required: false
+          type: string
+          description: "Comma-separated terminal names, e.g. `Lemont ONK`. Omit for all."
+        - name: product
+          in: query
+          required: false
+          type: string
+          description: "Comma-separated product codes, e.g. `LPG,NO2ULS`. Omit for all."
+        - name: limit
+          in: query
+          required: false
+          type: integer
+          default: 1000
+          maximum: 5000
+        - name: offset
+          in: query
+          required: false
+          type: integer
+          default: 0
+      responses:
+        "200":
+          description: "A page of supplier quotes."
+          schema:
+            $ref: "#/definitions/SupplierPage"
+        "400":
+          description: "Unknown parameter, or non-integer limit/offset."
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+        "403":
+          description: "Missing or invalid API key."
+      security:
+        - ApiKey: []
+
+securityDefinitions:
+  ApiKey:
+    type: apiKey
+    name: x-api-key
+    in: header
+
+definitions:
+
+  Page:
+    type: object
+    properties:
+      limit:
+        type: integer
+        description: "Page size actually applied, after clamping to the 5000 maximum."
+        example: 1000
+      offset:
+        type: integer
+        example: 0
+      count:
+        type: integer
+        description: "Rows in this page."
+        example: 1000
+      nextOffset:
+        type: integer
+        description: |
+          Offset for the next page, or `null` when there are no more rows. A full page
+          means there may be more, so the final request can legitimately return zero rows.
+        example: 1000
+
+  IndexPage:
+    allOf:
+      - $ref: "#/definitions/Page"
+      - type: object
+        properties:
+          prices:
+            type: array
+            items:
+              $ref: "#/definitions/IndexPrice"
+    example:
+      limit: 1000
+      offset: 0
+      count: 2
+      nextOffset: null
+      prices:
+        - opis_id: "OP*G6HI  U"
+          index: "OPIS Unbranded High"
+          market: "Abilene"
+          product: "87E10"
+          price: 2.9753
+          effective_at: "2026-07-27 22:00:00.000"
+          ingested_at: "2026-07-28 08:44:37.088"
+        - opis_id: "OP*G6AVG"
+          index: "OPIS Average"
+          market: "Abilene"
+          product: "91E10"
+          price: 3.7865
+          effective_at: "2026-07-27 22:00:00.000"
+          ingested_at: "2026-07-28 08:44:37.088"
+
+  SupplierPage:
+    allOf:
+      - $ref: "#/definitions/Page"
+      - type: object
+        properties:
+          prices:
+            type: array
+            items:
+              $ref: "#/definitions/SupplierPrice"
+    example:
+      limit: 1000
+      offset: 0
+      count: 2
+      nextOffset: null
+      prices:
+        - axxis_id: "DOOLY*EXM"
+          supplier: "DOOLY*EXM"
+          terminal: "Lemont ONK"
+          product: "LPG"
+          price: 0.66
+          effective_at: "2026-07-27 04:01:00.000"
+          ingested_at: "2026-07-28 08:44:37.088"
+        - axxis_id: "OFFEN*PHL~"
+          supplier: "OFFEN*PHL~"
+          terminal: "CheyenneMG"
+          product: "87E10"
+          price: 3.4612
+          effective_at: "2026-07-27 04:01:00.000"
+          ingested_at: "2026-07-28 08:44:37.088"
+
+  IndexPrice:
+    type: object
+    properties:
+      opis_id:
+        type: string
+        description: |
+          Upstream OPIS benchmark code, verbatim including internal padding. Stable
+          identity — prefer this over `index` for keying on your side.
+        example: "OP*G6HI  U"
+      index:
+        type: string
+        description: "Display label. This is what the `index` query parameter matches."
+        example: "OPIS Unbranded High"
+      market:
+        type: string
+        example: "Abilene"
+      product:
+        type: string
+        example: "87E10"
+      price:
+        type: number
+        description: "USD per gallon, as published. No markup or adjustment."
+        example: 2.9753
+      effective_at:
+        type: string
+        description: "When the price became effective. UTC."
+        example: "2026-07-27 22:00:00.000"
+      ingested_at:
+        type: string
+        description: "When ATLAS read the upstream file. UTC."
+        example: "2026-07-28 08:44:37.088"
+
+  SupplierPrice:
+    type: object
+    properties:
+      axxis_id:
+        type: string
+        description: |
+          Upstream supplier code, verbatim including internal padding and any trailing
+          `~`. Stable identity — prefer this over `supplier` for keying on your side.
+        example: "MUSKET   ~"
+      supplier:
+        type: string
+        description: |
+          Display label, currently derived from `axxis_id` with padding removed. Human
+          readable names will replace these in a future version; `axxis_id` will not change.
+          This is what the `supplier` query parameter matches.
+        example: "MUSKET~"
+      terminal:
+        type: string
+        example: "Lemont ONK"
+      product:
+        type: string
+        example: "LPG"
+      price:
+        type: number
+        description: "USD per gallon, as published. No markup or adjustment."
+        example: 0.66
+      effective_at:
+        type: string
+        description: "When the quote became effective. UTC."
+        example: "2026-07-27 04:01:00.000"
+      ingested_at:
+        type: string
+        description: "When ATLAS read the upstream file. UTC."
+        example: "2026-07-28 08:44:37.088"
+
+  ErrorResponse:
+    type: object
+    properties:
+      error:
+        type: string
+        example: "unknown parameter(s) ['bogus']; valid: ['index', 'market', 'product'] plus limit, offset"
